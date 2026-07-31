@@ -1,10 +1,20 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'alarm_notifications.dart';
+import 'alarm_ring_page.dart';
 import 'home_page.dart';
 import 'fence_manager.dart';
+
+/// Root navigator key: lets a notification response (received outside any
+/// widget's BuildContext) push the ringing screen from wherever the app
+/// currently is.
+final navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +28,16 @@ Future<void> main() async {
     debugPrint('Geofence init failed (unsupported platform?): $e');
   });
   runApp(const GeoAlarmApp());
+}
+
+/// Pushes the ringing screen, replacing whatever's on screen so the user
+/// can't navigate "past" an active alarm via the back button.
+void _presentAlarm(AlarmPayload payload) {
+  final navigator = navigatorKey.currentState;
+  if (navigator == null) return;
+  navigator.push(
+    MaterialPageRoute(builder: (_) => AlarmRingPage(payload: payload)),
+  );
 }
 
 // ─── Colour Palette (from uploaded swatch) ────────────────────────────────
@@ -193,10 +213,45 @@ class GeoAlarmApp extends StatefulWidget {
 
 class _GeoAlarmAppState extends State<GeoAlarmApp> {
   bool _isDarkMode = false;
+  StreamSubscription<NotificationResponse>? _responseSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupAlarmLaunch();
+  }
+
+  Future<void> _setupAlarmLaunch() async {
+    await initAlarmNotifications();
+
+    // App already running: a plain tap on the notification (not an
+    // action button — those are handled inside alarm_notifications.dart)
+    // surfaces here so we can push the ringing screen.
+    _responseSub = alarmResponses.stream.listen((response) {
+      if (response.actionId != null) return;
+      final payload = AlarmPayload.decode(response.payload);
+      if (payload != null) _presentAlarm(payload);
+    });
+
+    // App was cold-started by tapping/full-screen-launching the notification.
+    final launchDetails = await alarmPlugin.getNotificationAppLaunchDetails();
+    if (launchDetails?.didNotificationLaunchApp ?? false) {
+      final payload =
+          AlarmPayload.decode(launchDetails!.notificationResponse?.payload);
+      if (payload != null) _presentAlarm(payload);
+    }
+  }
+
+  @override
+  void dispose() {
+    _responseSub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'GeoAlarm',
       theme: _isDarkMode ? AppTheme.dark : AppTheme.light,
       debugShowCheckedModeBanner: false,

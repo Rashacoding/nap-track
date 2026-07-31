@@ -191,17 +191,6 @@ class _NewAlarmPageState extends State<NewAlarmPage> {
     }
   }
 
-  String get _radiusHint {
-    // Walking pace (~80 m/min) for short fences, bus pace (~500 m/min)
-    // for the long ones where a walking estimate is meaningless.
-    if (_radius < 2000) {
-      final mins = (_radius / 80).round().clamp(1, 999);
-      return '~$mins min walk';
-    }
-    final mins = (_radius / 500).round().clamp(1, 999);
-    return '~$mins min by bus';
-  }
-
   void _showMessage(String text) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
@@ -618,10 +607,8 @@ class _NewAlarmPageState extends State<NewAlarmPage> {
           _FormSection(
             label: 'Fence radius',
             icon: Icons.radar_rounded,
-            trailing: Text(_radiusHint,
-                style: TextStyle(fontSize: 12, color: textSecondary)),
             // StatefulBuilder: drag ticks rebuild only this section; the rest
-            // of the page (map preview, hint) syncs once on release.
+            // of the page (map preview) syncs once on release.
             child: StatefulBuilder(
               builder: (context, setSection) => Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

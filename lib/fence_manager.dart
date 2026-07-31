@@ -1,27 +1,22 @@
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:native_geofence/native_geofence.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'alarm_notifications.dart';
 import 'main.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Geofence background callback
 //
 // Runs in a background isolate — it may fire while the app is closed, so it
-// cannot touch any UI. It re-initializes the notification plugin and shows a
-// full-screen alarm notification.
+// cannot touch any UI. It shows a full-screen alarm notification with
+// Stop/Snooze actions; the actual ringtone + vibration loop is driven by
+// AlarmRingPage once the notification's full-screen intent opens the app.
 // ═══════════════════════════════════════════════════════════════════════════
 @pragma('vm:entry-point')
 Future<void> fenceTriggered(GeofenceCallbackParams params) async {
   if (params.event != GeofenceEvent.enter) return;
 
-  final notifications = FlutterLocalNotificationsPlugin();
-  await notifications.initialize(
-    settings: const InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      iOS: DarwinInitializationSettings(),
-    ),
-  );
+  await initAlarmNotifications();
 
   final alarms = await AlarmStorage.loadAlarms();
 
@@ -30,42 +25,19 @@ Future<void> fenceTriggered(GeofenceCallbackParams params) async {
     if (alarm != null && !alarm.isActive) continue;
 
     final name = alarm?.name ?? 'your stop';
-    final soundOn = alarm?.soundOn ?? true;
-    final vibrateOn = alarm?.vibrateOn ?? true;
-    final ringtoneUri = alarm?.ringtoneUri ?? '';
-    final hasCustomSound =
-        ringtoneUri.isNotEmpty && ringtoneUri.startsWith('content://');
 
-    await notifications.show(
+    final payload = AlarmPayload(
       id: fence.id.hashCode,
       title: 'Wake up — $name!',
       body: alarm != null && alarm.leadMinutes > 0
           ? 'You are about ${alarm.leadMinutes} min from ${alarm.route}'
           : 'You have arrived near ${alarm?.route ?? 'your destination'}',
-      notificationDetails: NotificationDetails(
-        android: AndroidNotificationDetails(
-          'nap_track_arrival',
-          'Arrival alarms',
-          channelDescription: 'Rings when you approach a saved destination',
-          importance: Importance.max,
-          priority: Priority.max,
-          category: AndroidNotificationCategory.alarm,
-          fullScreenIntent: true,
-          playSound: soundOn,
-          sound: soundOn && hasCustomSound
-              ? UriAndroidNotificationSound(ringtoneUri)
-              : null,
-          audioAttributesUsage: AudioAttributesUsage.alarm,
-          enableVibration: vibrateOn,
-          autoCancel: false,
-        ),
-        iOS: DarwinNotificationDetails(
-          presentAlert: true,
-          presentSound: soundOn,
-          interruptionLevel: InterruptionLevel.timeSensitive,
-        ),
-      ),
+      ringtoneUri: alarm?.ringtoneUri ?? '',
+      soundOn: alarm?.soundOn ?? true,
+      vibrateOn: alarm?.vibrateOn ?? true,
     );
+
+    await showAlarm(payload);
   }
 }
 
@@ -86,6 +58,7 @@ class FenceManager {
 
   static Future<void> init() async {
     await NativeGeofenceManager.instance.initialize();
+    await initAlarmNotifications();
   }
 
   /// Requests the permissions geofencing needs. Returns true if usable.
@@ -97,6 +70,9 @@ class FenceManager {
     if (!whenInUse.isGranted) return false;
     await Permission.locationAlways.request();
     await Permission.notification.request();
+    // Best-effort: without this, snoozing falls back to inexact timing
+    // instead of failing outright (see scheduleSnooze).
+    await Permission.scheduleExactAlarm.request();
     return true;
   }
 
